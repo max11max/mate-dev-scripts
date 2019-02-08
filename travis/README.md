@@ -10,7 +10,7 @@ By default, a YAML file called `.docker-build.yml` is used.
 
 ```
 usage: docker-build [-h] [-c FILE] [-n IMAGE] [-l N] [-s] [-v] [-i]
-                    [-b autotools|meson] [-C]
+                    [-b autotools|meson|scripts] [-r] [-t TAG] [-C]
 
 Compile the software in a Docker container
 
@@ -25,8 +25,11 @@ optional arguments:
   -v, --verbose         Verbose output, the number of output lines is not
                         limited
   -i, --install         Install dependent packages in docker container.
-  -b autotools|meson, --build autotools|meson
+  -b autotools|meson|scripts, --build autotools|meson|scripts
                         Compile the software in docker container.
+  -r, --release         Release the tarballs.
+  -t TAG, --tag TAG     Release based on which tag.(default to use
+                        "TRAVIS_TAG" envirment variable)
   -C, --clean           Clean up the docker container.
 ```
 
@@ -260,7 +263,7 @@ If you want to support more distro, add a similar line to env :
 
 ```
 env:
-  - DISTRO="base/archlinux"
+  - DISTRO="archlinux/base"
   - DISTRO="debian:sid"
   - DISTRO="fedora:29"
   - DISTRO="ubuntu:18.10"

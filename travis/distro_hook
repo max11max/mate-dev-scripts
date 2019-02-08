@@ -10,7 +10,7 @@ case $distro in
                 echo 'Server = http://mirrors.163.com/archlinux/$repo/os/$arch' > /etc/pacman.d/mirrorlist
                 ;;
         debian)
-                sed -i -s 's/deb.debian.org/mirrors.163.com/g' /etc/apt/sources.list
+                sed -i -s 's/deb.debian.org/ftp2.cn.debian.org/g' /etc/apt/sources.list
                 ;;
         fedora)
                 cat > /etc/yum.repos.d/fedora.repo << END_OF_LINE

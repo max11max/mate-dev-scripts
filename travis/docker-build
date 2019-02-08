@@ -24,45 +24,369 @@ import sys
 import shlex
 import stat
 import json
+import yaml
 import argparse
 import subprocess
 import shutil
+import re
+import github
+import glob
+import requests
+import hashlib
+import multiprocessing
 
 MESON_BUILD_DIRNAME = '_build'
+DIGITS = re.compile(r'(\d+)')
 
 class Result:
     pass
 
 class ShortIO(object):
     def __init__ (self, limit=0):
-        self.head_lines = int(limit/2)
-        self.tail_lines = int(limit - self.head_lines)
+        if limit == 1:
+            self.head_lines = 1
+            self.tail_lines = 0
+        else:
+            self.head_lines = int(limit/2)
+            self.tail_lines = int(limit - self.head_lines)
+        if (self.head_lines + self.tail_lines) > limit:
+            self.tail_lines = 0
         self.line_count = 0
         self.tail_list = []
+        self.dot_count = 0
 
     def print(self, msg):
-        if self.head_lines <= 0 or self.tail_lines <= 0:
+        if self.head_lines <= 0:
             print(msg, end='', flush=True)
             return
         if self.line_count < self.head_lines:
             print(msg, end='', flush=True)
         else:
             print('.', end='', flush=True)
+            self.dot_count += 1
             self.tail_list.append(msg)
             if len(self.tail_list) > self.tail_lines:
-                self.tail_list = self.tail_list[self.tail_lines:]
+                self.tail_list = self.tail_list[-self.tail_lines:]
         self.line_count += 1
 
     def end(self):
-        if self.head_lines <= 0 or self.tail_lines <= 0:
+        if self.head_lines <= 0:
             return
         result = self.line_count - self.head_lines - self.tail_lines
+        if self.dot_count > 0:
+            print('\b'* self.dot_count, end='', flush=False)
         if result > 0:
-            print(' %d lines of output are not displayed ......' % result)
+            print('........................... Omit %d lines of output ...........................' % result)
+        if self.tail_lines > 0:
+            for line in self.tail_list:
+                print(line, end='', flush=True)
+
+class Version(object):
+    def __init__(self, version='1.0', max_minor=99, max_micro=99):
+        self.max_minor = max_minor
+        self.max_micro = max_micro
+        self.parse_version(version)
+
+    def __str__(self):
+        _version = '.'.join(str(num) for num in self.vlist[:])
+        return self.prefix + _version + self.suffix
+
+    def tag(self):
+        _version = '.'.join(str(num) for num in self.vlist[:])
+        return 'v' + _version
+
+    def version(self):
+        _version = '.'.join(str(num) for num in self.vlist[:])
+        return _version
+
+    def parse_version(self, version):
+        self.vlist = [int(num,10) for num in DIGITS.findall(version)]
+        _version = '.'.join(str(num) for num in self.vlist[:])
+        self.prefix, self.suffix = version.split(_version, 1)
+        length = len(self.vlist)
+        if len(self.vlist) < 3:
+            self.vlist.extend([0]*(3-length))
+        self.vlist = self.vlist[:3]
+
+    def next(self):
+        if self.vlist[2] < self.max_micro:
+            self.vlist[2] += 1
+        elif self.vlist[1] < self.max_minor:
+            self.vlist[1] += 1
+            self.vlist[2] = 0
         else:
-            print()
-        for line in self.tail_list:
-            print(line, end='', flush=True)
+            self.vlist[0] += 1
+            self.vlist[1] = 0
+            self.vlist[2] = 0
+        return self.__str__()
+
+    def prev(self):
+        if self.vlist[2] > 0:
+            self.vlist[2] -= 1
+        elif self.vlist[1] > 0:
+            self.vlist[1] -= 1
+            self.vlist[2] = self.max_micro
+        elif self.vlist[0] > 0:
+            self.vlist[0] -= 1
+            self.vlist[1] = self.max_minor
+            self.vlist[2] = self.max_micro
+        if (self.vlist[0] + self.vlist[1] + self.vlist[2]) == 0:
+            self.vlist[2] = 1
+        return self.__str__()
+
+    def compare(self, version):
+        vlist = [int(num,10) for num in DIGITS.findall(version)]
+        length = len(vlist)
+        if len(vlist) < 3:
+            vlist.extend([0]*(3-length))
+        result = 0
+        for i in range(3):
+            result = self.vlist[i] - vlist[i]
+            if result != 0:
+                break
+        return result
+
+class Github(object):
+    def __init__(self, opts, token=None):
+        self.opts = opts
+        self.token = os.getenv('GITHUB_TOKEN', '')
+        self.verbose = opts['verbose']
+        self.new_tag = ''
+
+        if not self.token:
+            print_error('Please setup "GITHUB_TOKEN" envirment varable')
+            return None
+
+        self.init_opts()
+        self.gh = github.Github(self.token)
+        self.repo = self.gh.get_repo(self.opts['owner_name'] + '/' + self.opts['repo_name'])
+        self.calc_version()
+
+        if not self.check_scopes():
+            print_error('Please setup "GITHUB_TOKEN" envirment varable')
+            return None
+
+    def init_opts(self):
+        file_glob = False
+        self.base_version = '1.0'
+        self.draft = False
+        self.prerelease = False
+        self.checksum = False
+        self.file_list = []
+        self.servers = []
+
+        if 'releases' in self.opts['config'].keys():
+            if 'base_version' in self.opts['config']['releases'].keys():
+                self.base_version = str(self.opts['config']['releases']['base_version'])
+
+            if 'draft' in self.opts['config']['releases'].keys():
+                self.draft = bool(self.opts['config']['releases']['draft'])
+
+            if 'prerelease' in self.opts['config']['releases'].keys():
+                self.prerelease = bool(self.opts['config']['releases']['prerelease'])
+
+            if 'file_glob' in self.opts['config']['releases'].keys():
+                file_glob = bool(self.opts['config']['releases']['file_glob'])
+
+            if 'checkcum' in self.opts['config']['releases'].keys():
+                self.checksum = bool(self.opts['config']['releases']['checksum'])
+
+            if 'files' in self.opts['config']['releases'].keys():
+                files = self.opts['config']['releases']['files']
+                if type(files) == str:
+                    if file_glob:
+                        self.file_list.extend(glob.glob(files))
+                    else:
+                        self.file_list.append(files)
+                elif type(files) == list:
+                    if file_glob:
+                        for i in files:
+                            self.file_list.extend(glob.glob(i))
+                    else:
+                        self.file_list.extend(files)
+
+            if 'servers' in self.opts['config']['releases'].keys():
+                server = self.opts['config']['releases']['servers']
+                if type(server) == str:
+                    self.servers.append(server)
+                elif type(server) == list:
+                    self.servers.extend(server)
+        for i in self.file_list:
+            if not os.path.isfile(i):
+                self.file_list.remove(i)
+        if self.checksum:
+            checksum_list = []
+            for i in self.file_list:
+                checksum_list.append(gen_checksum(i))
+            self.file_list.extend(checksum_list)
+        self.base_tag = Version(self.base_version).tag()
+
+    def calc_version(self):
+        self.all_tags = [tag.name for tag in self.repo.get_tags()]
+        if self.opts['new_tag']:
+            self.new_tag = self.opts['new_tag']
+            self.new_version = Version(self.new_tag).version()
+        else:
+            next_new_tag = False
+            new_version = Version(self.base_version)
+            for i in range(100):
+                new_version.next()
+                if new_version.tag() not in self.all_tags:
+                    next_new_tag = True
+                    break
+            if next_new_tag:
+                self.new_tag = new_version.tag()
+                self.new_version = new_version.version()
+
+        # Find old tag name
+        found_old_tag = False
+        found_version = Version(self.new_tag)
+        for i in range(1000):
+            found_version.prev()
+            if found_version.tag() in self.all_tags:
+                found_old_tag = True
+                break
+        if found_old_tag:
+            self.base_tag = found_version.tag()
+            self.base_version = found_version.version()
+
+    def check_scopes(self):
+        repo_ok = False
+        email_ok = False
+        if 'repo' in self.gh.oauth_scopes or 'public_repo' in self.gh.oauth_scopes:
+            repo_ok = True
+        else:
+            print_error('Your personal access token without the "public_repo" or "repo" scope.')
+
+        if 'user' in self.gh.oauth_scopes or 'user:email' in self.gh.oauth_scopes:
+            email_ok = True
+        else:
+            print_error('Your personal access token without the "user" or "user:email" scope.')
+
+        return repo_ok and email_ok
+
+    def get_git_log(self):
+        lines = []
+        for commit in self.repo.compare(self.base_tag, self.new_tag).commits:
+            lines.append('- ' + commit.commit.message)
+        return lines
+
+    def get_news_log(self):
+        lines = []
+        news_path = os.path.join(self.opts['host_dir'], 'NEWS')
+        if not os.path.isfile(news_path):
+            print_error('"NEWS" file lost.')
+            return lines
+        old = '{} {}'.format(self.opts['repo_name'], self.base_version)
+        new = '{} {}'.format(self.opts['repo_name'], self.new_version)
+
+        found = False
+        data = open(news_path).read().splitlines()
+        for i in data:
+            line = i.strip()
+            if line.startswith('##') and line.endswith(new):
+                found = True
+        if not found:
+            print_error('forgot to update the "NEWS" file for %s-%s?' % (self.opts['repo_name'], new))
+            return lines
+
+        found = False
+        for i in data:
+            line = i.strip()
+            if line.startswith('##') and line.endswith(new):
+                found = True
+            if line.startswith('##') and line.endswith(old):
+                found = False
+            if found:
+                lines.append(line)
+        return lines
+
+    def create_tag(self):
+        if self.verbose > 1:
+            print("Create new tag: %s" % self.new_tag)
+
+        account = Result()
+        user = self.gh.get_user()
+        if not user.email:
+            account.name = user.name
+            for email in user.get_emails():
+                if email['primary']:
+                    account.email = email['email']
+
+        author = github.InputGitAuthor(account.name, account.email)
+        master = self.repo.get_branch("master")
+        tag = self.repo.create_git_tag(self.new_tag, 'version %s' % self.new_version, master.commit.commit.sha, 'commit', tagger=author)
+        self.repo.create_git_ref('refs/tags/{}'.format(tag.tag), tag.sha)
+
+    def release(self):
+        info = '1. Create github'
+        if self.prerelease:
+            info += ' prerelease'
+        else:
+            info += ' release'
+        if self.draft:
+            info += '[DRAFT]'
+        info += ' for {}-{}'.format(self.opts['repo_name'], self.new_version)
+        print_info(info)
+
+        #if new tag not exist, create it first.
+        if self.new_tag not in self.all_tags:
+            self.create_tag()
+
+        logs = self.get_news_log()
+        if not logs:
+            logs = self.get_git_log()
+
+        logs.insert(0, 'Changes since the last release: ' + self.repo.html_url + '/compare/' + self.base_tag + '...' + self.new_tag)
+        body = '\n'.join(logs)
+
+        title = "%s %s release" % (self.opts['repo_name'], self.new_version)
+        if self.verbose > 1:
+            print(title)
+            print('='*80)
+            print(body)
+            print('='*80)
+
+        self.release = self.repo.create_git_release(self.new_tag, name=title, message=body, draft=self.draft, prerelease=self.prerelease)
+
+    def upload(self):
+        for i in self.file_list:
+            if self.verbose > 0:
+                print('Uploading {} ...'.format(os.path.basename(i)))
+            self.release.upload_asset(i)
+        self.release = self.repo.get_release(self.release.id)
+        print('Please visit: {}\n'.format(self.release.html_url))
+
+    def notify(self):
+        print_info('2. Notify the server that a new version is released')
+        data = {}
+        data['name'] = self.opts['repo_name']
+        data['version'] = self.new_version
+        data['tag'] = self.release.tag_name
+        data['draft'] = self.release.draft
+        data['news'] = self.release.body
+        data['prerelease'] = self.release.prerelease
+        data['files'] = []
+        for i in self.release.get_assets():
+            file = {}
+            file['name'] = i.name
+            file['size'] = i.size
+            file['url'] = i.browser_download_url
+            data['files'].append(file)
+        post = json.dumps(data, indent=2)
+        for url in self.servers:
+            if self.verbose > 0:
+                print('Notification website: {}'.format(url))
+            if self.verbose > 1:
+                print('The POST data is: \n{}'.format(post))
+            try:
+                r = requests.post(url, json=data)
+                if r.status_code != 200:
+                    print_error('Visit {} : {} {}'.format(url, r.status_code, r.reason))
+                else:
+                    print('{} has been notified'.format(url))
+            except requests.exceptions.ConnectionError as error:
+                print_error('Connect Error {} : {}'.format(url, error))
 
 class bcolors:
     CEND    = '\33[0m'
@@ -82,7 +406,19 @@ def print_cmdline(msg):
 
 def print_error(msg):
     _color_print(bcolors.CRED, '!!! ERROR: %s' % msg)
-    #print(msg)
+
+def gen_checksum(path):
+   fobj = open(path, 'rb')
+   fobj.seek(0)
+   sha256sum = hashlib.sha256(fobj.read()).hexdigest()
+   fobj.close()
+
+   base_name = os.path.basename(path)
+   sum_path = os.path.join('{}.sha256sum'.format(base_name))
+   sobj = open(sum_path, 'w+')
+   sobj.write('{}  {}\n'.format(sha256sum, base_name))
+   sobj.close()
+   return sum_path
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Compile the software in a Docker container')
@@ -92,7 +428,9 @@ def parse_args():
     parser.add_argument('-s', '--shell', dest='shell', action='store_true', help='Run interactive bash in the docker container.')
     parser.add_argument('-v', '--verbose', dest='verbose', action='count', default=0, help='Verbose output, the number of output lines is not limited')
     parser.add_argument('-i', '--install', dest='install', action='store_true', help='Install dependent packages in docker container.')
-    parser.add_argument('-b', '--build', dest='build', metavar='autotools|meson', action='append', help='Compile the software in docker container.')
+    parser.add_argument('-b', '--build', dest='build', metavar='autotools|meson|scripts', action='append', help='Compile the software in docker container.')
+    parser.add_argument('-r', '--release', dest='release', action='store_true', help='Release the tarballs.')
+    parser.add_argument('-t', '--tag', dest='tag', action='store', help='Release based on which tag.(default to use "TRAVIS_TAG" envirment variable)')
     parser.add_argument('-C', '--clean', dest='clean', action='store_true', help='Clean up the docker container.')
 
     return parser.parse_args()
@@ -119,24 +457,24 @@ def run_cmd(command, opts):
             print('# %s' % sh)
 
     result = Result()
-    if opts['stage'] == 'src_build':
+    if opts['stage'] == 'source_build' or opts['stage'] == 'build_scripts':
         if opts['verbose'] > 0:
-            io = ShortIO(-1)
+            io = ShortIO()
         else:
             io = ShortIO(opts['limit'])
     elif opts['stage'] == 'after_scripts':
         if opts['verbose'] > 1:
-            io = ShortIO(-1)
+            io = ShortIO()
         else:
             io = ShortIO(opts['limit'])
     elif opts['stage'] == 'before_scripts':
         if opts['verbose'] > 2:
-            io = ShortIO(-1)
+            io = ShortIO()
         else:
             io = ShortIO(opts['limit'])
     elif opts['stage'] == 'system_install':
         if opts['verbose'] > 3:
-            io = ShortIO(-1)
+            io = ShortIO()
         else:
             io = ShortIO(opts['limit'])
     else:
@@ -240,11 +578,23 @@ def system_install (opts):
         cmd = '%s %s' % (opts['install_command'], requires)
         docker_exec (cmd, opts)
 
-def get_repo_name():
-    cmd = 'git rev-parse --show-toplevel'
+def get_repo_name(join_char=None):
+    cmd = 'git remote get-url origin'
     output = subprocess.check_output(cmd, shell=True)
-    output = output.decode("utf-8")
-    return os.path.basename(output.strip())
+    output = output.decode("utf-8").strip()
+
+    output_slice = output.split('/')
+    repo = output_slice[-1]
+    owner = output_slice[-2]
+
+    if repo.endswith('.git'):
+        repo = repo[:-4]
+    if owner.find(':') >=0:
+        owner = owner.split(':')[-1]
+    if join_char is None:
+        return (owner, repo)
+    else:
+        return join_char.join([owner, repo])
 
 def build_run(script, cmdline, opts):
     opts['stage'] = script
@@ -288,6 +638,7 @@ def setup_options(args, config):
             'build_dir' : '/rootdir',
             'verbose' : args.verbose,
             'config' : config,
+            'new_tag' : '',
             'travis' : bool(os.getenv("TRAVIS")),
             }
 
@@ -298,6 +649,12 @@ def setup_options(args, config):
     if args.build:
         args.build = sorted(set(args.build), key=args.build.index)
 
+    if args.release:
+        if args.tag:
+            option['new_tag'] = args.tag
+        else:
+            option['new_tag'] = os.getenv('TRAVIS_TAG', '')
+
     # parse distro
     distro = args.name.split(':')
     distro_name = distro[0]
@@ -307,7 +664,9 @@ def setup_options(args, config):
         distro_name = distro_name.rsplit('/',1)[-1]
 
     option['distro_name'] = distro_name
-    option['container_name'] = "%s-%s-build" % (get_repo_name(), option['distro_name'])
+    option['owner_name'] = get_repo_name()[0]
+    option['repo_name'] = get_repo_name()[1]
+    option['container_name'] = "%s-%s-build" % (option['repo_name'], option['distro_name'])
     if distro_name == 'archlinux':
         option['distro_upgrade'] = 'pacman -Syu --noconfirm'
         option['install_command'] = 'pacman -Sy --noconfirm'
@@ -351,8 +710,12 @@ def autotools_build (opts):
             cmdlines.append('./configure ' + configures)
         if not opts['travis']:
             cmdlines.append('make clean')
-        cmdlines.append('make')
-        build_run ('src_build', cmdlines, opts)
+        cpu_count = multiprocessing.cpu_count()
+        if cpu_count > 1:
+            cmdlines.append('make -j%d'% cpu_count)
+        else:
+            cmdlines.append('make')
+        build_run ('source_build', cmdlines, opts)
 
 def meson_build (opts):
     configures = '--prefix /usr'
@@ -366,7 +729,7 @@ def meson_build (opts):
         cmdlines.append('meson %s %s' % (MESON_BUILD_DIRNAME, configures))
         cmdlines.append('cd %s' % (MESON_BUILD_DIRNAME))
         cmdlines.append('ninja')
-        build_run ('src_build', cmdlines, opts)
+        build_run ('source_build', cmdlines, opts)
 
 def source_build(build_type, opts):
     opts['build_type'] = build_type
@@ -380,26 +743,22 @@ def source_build(build_type, opts):
         autotools_build (opts)
     elif opts['build_type'] == 'meson':
         meson_build (opts)
+    elif opts['build_type'] == 'scripts':
+        run_scripts(opts, 'build')
     else:
         print_info ('Build system "%s" is not supported.' % build_type)
     run_scripts(opts, 'after')
 
+def release(opts):
+    gh = Github(opts)
+    if gh == None:
+        return
+    gh.release()
+    gh.upload()
+    gh.notify()
+
 if __name__=="__main__":
     args = parse_args()
-
-    if args.config.endswith('.yml') or args.config.endswith('.yaml'):
-        try:
-            import yaml
-        except:
-            run_cmd ("apt-get update -y", {'verbose':True, 'limit':100})
-            run_cmd ("apt-get install -y python3-yaml", {'verbose':True, 'limit':100})
-            try:
-                import yaml
-            except:
-                msg = "Can't import 'yaml' python module on the Host OS.\nPlease replace the '%s' file with a JSON file.\n" % args.config
-                print_error(msg)
-                sys.exit(1)
-
     config = load_config(args.config)
     opts = setup_options(args, config)
 
@@ -417,6 +776,9 @@ if __name__=="__main__":
     if args.build:
         for i in args.build:
             source_build(i, opts)
+
+    if args.release:
+        release(opts)
 
     if args.clean:
         if docker_is_running (opts):

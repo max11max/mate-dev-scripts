@@ -6,11 +6,15 @@ services:
   - docker
 
 # Trigger only on the travis branch
+# Remove the lines if every thing is ok.
 branches:
   only:
   - travis
 
 before_install:
+  - sudo apt-get install -y python3-pip python3-setuptools
+  - sudo pip3 install --upgrade pip
+  - sudo pip install PyGithub
   - curl -Ls -o docker-build https://github.com/mate-desktop/mate-dev-scripts/raw/master/travis/docker-build
   - chmod +x docker-build
 
@@ -20,8 +24,21 @@ install:
 script:
   - ./docker-build --name ${DISTRO} --verbose --config .travis.yml --build autotools
 
+# Remove the comments if you need auto release version when git push tag.
+# Don't forget to create github personal access token with the "public_repo/repo" and "user/user:email" scopes.
+# And setup the token value to the hidden environment variables named 'GITHUB_TOKEN'.
+# reference: https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
+#deploy:
+#  provider: script
+#  script: ./docker-build --name ${DISTRO} --verbose --config .travis.yml --release
+#  skip_cleanup: true
+#  on:
+#    tags: true
+#    condition: "${TRAVIS_TAG} =~ ^v.*$ && ${DISTRO} =~ ^fedora.*$"
+
 env:
-  - DISTRO="base/archlinux"
+  # For devel branch
+  - DISTRO="archlinux/base"
   - DISTRO="debian:sid"
   - DISTRO="fedora:29"
   - DISTRO="ubuntu:18.10"
@@ -31,7 +48,7 @@ env:
 ##########################################################
 requires:
   archlinux:
-    # Useful URL: https://git.archlinux.org/svntogit/community.git/tree/example
+    # Useful URL: https://git.archlinux.org/svntogit/community.git/tree/EXAMPLE
     - gcc
     - git
     - make
@@ -39,13 +56,13 @@ requires:
 
   debian:
     # Useful URL: https://github.com/mate-desktop/debian-packages
-    # Useful URL: https://salsa.debian.org/debian-mate-team/example
+    # Useful URL: https://salsa.debian.org/debian-mate-team/EXAMPLE
     - git
     - make
     # Append new requires below
 
   fedora:
-    # Useful URL: https://src.fedoraproject.org/cgit/rpms/example.git
+    # Useful URL: https://src.fedoraproject.org/cgit/rpms/EXAMPLE.git
     - gcc
     - git
     - make
@@ -60,7 +77,7 @@ requires:
 variables:
   - CFLAGS="-Wall -Werror=format-security"
 
-# Remove the comment if you need special parameters
+# Remove the comments if you need special parameters
 #configures:
 #  autotools:
 #    - --prefix=/usr
@@ -69,11 +86,18 @@ variables:
 #    - --prefix /usr
 #    - --sysconfdir /etc
 
-# Remove the comment if you need some thing do before build.
+# Remove the comments if you need some thing do before build.
 #before_scripts:
-#  - ''
+# Remove the comments if `make distcheck` fail on debian.
+#  - if [ ${DISTRO_NAME} == "debian" ];then
+#  -     curl -Ls -o debian.sh https://github.com/mate-desktop/mate-dev-scripts/raw/master/travis/debian.sh
+#  -     bash ./debian.sh
+#  - fi
+
 #  - cd ${START_DIR}
-#  - '[ -f mate-desktop-1.21.2.tar.xz ] || curl -Ls -o mate-desktop-1.21.2.tar.xz http://pub.mate-desktop.org/releases/1.21/mate-desktop-1.21.2.tar.xz'
+#  - if [ ! -f mate-desktop-1.21.2.tar.xz ];then
+#  -     curl -Ls -o mate-desktop-1.21.2.tar.xz http://pub.mate-desktop.org/releases/1.21/mate-desktop-1.21.2.tar.xz
+#  - fi
 #  - tar xf mate-desktop-1.21.2.tar.xz
 #  - cd mate-desktop-1.21.2
 #  - if [ ${DISTRO_NAME} == "debian" -o ${DISTRO_NAME} == "ubuntu" ];then
@@ -81,11 +105,26 @@ variables:
 #  - else
 #  -     ./configure --prefix=/usr
 #  - fi
+#  - if [ ${TRAVIS} == "false" ]; then
+#  -     make clean
+#  - fi
 #  - make
 #  - make install
-#  - ''
+
+# Used for "--build scripts"
+#build_scripts:
+#  - cmake
+#  - make
 
 after_scripts:
   - make distcheck
-  # Remove the comment if `make distcheck` fail.
-  #- 'if [ $? -ne 0 ];then RED="\033[0;31m"; NC="\033[0m"; printf "${RED}!!! ERROR: Run make distcheck failed.${NC}\n"; fi'
+
+releases:
+  draft: False
+  prerelease: False
+  checksum: True
+  base_version: 1.20.0
+  file_glob: True
+  files: EXAMPLE-*.tar.xz
+  servers:
+    - http://pub.mate-desktop.org/releases/
