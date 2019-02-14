@@ -188,7 +188,7 @@ class Github(object):
             if 'file_glob' in self.opts['config']['releases'].keys():
                 file_glob = bool(self.opts['config']['releases']['file_glob'])
 
-            if 'checkcum' in self.opts['config']['releases'].keys():
+            if 'checksum' in self.opts['config']['releases'].keys():
                 self.checksum = bool(self.opts['config']['releases']['checksum'])
 
             if 'files' in self.opts['config']['releases'].keys():
