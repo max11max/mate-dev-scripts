@@ -29,11 +29,25 @@ import argparse
 import subprocess
 import shutil
 import re
-import github
 import glob
 import requests
 import hashlib
 import multiprocessing
+try:
+    import github
+except:
+    if bool(os.getenv("TRAVIS")):
+        print("Please make sure your .travis.yml has the follow lines:")
+        print("""
+install:
+  - sudo apt-get install -y python3-pip python3-setuptools
+  - sudo pip3 install --upgrade pip
+  - sudo pip install PyGithub
+  - ./docker-build --name ${DISTRO} --config .travis.yml --install
+""")
+    else:
+        print('Please install "python3-github" package on youre system.')
+    sys.exit(1)
 
 MESON_BUILD_DIRNAME = '_build'
 DIGITS = re.compile(r'(\d+)')
