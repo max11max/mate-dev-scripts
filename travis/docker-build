@@ -172,6 +172,7 @@ class Github(object):
         self.draft = False
         self.prerelease = False
         self.checksum = False
+        self.overwrite = False
         self.file_list = []
         self.servers = []
 
@@ -190,6 +191,9 @@ class Github(object):
 
             if 'checksum' in self.opts['config']['releases'].keys():
                 self.checksum = bool(self.opts['config']['releases']['checksum'])
+
+            if 'overwrite' in self.opts['config']['releases'].keys():
+                self.overwrite = bool(self.opts['config']['releases']['overwrite'])
 
             if 'files' in self.opts['config']['releases'].keys():
                 files = self.opts['config']['releases']['files']
@@ -318,7 +322,23 @@ class Github(object):
         tag = self.repo.create_git_tag(self.new_tag, 'version %s' % self.new_version, master.commit.commit.sha, 'commit', tagger=author)
         self.repo.create_git_ref('refs/tags/{}'.format(tag.tag), tag.sha)
 
+    def check_release(self):
+        ok = True
+        releases = self.repo.get_releases()
+        for release in releases:
+            if release.tag_name == self.new_tag:
+                if self.overwrite:
+                    release.delete_release()
+                else:
+                    ok = False
+                    print_error("The release already exists.")
+                break
+        return ok
+
     def release(self):
+        if not self.check_release():
+            return
+
         info = '1. Create github'
         if self.prerelease:
             info += ' prerelease'
@@ -348,6 +368,8 @@ class Github(object):
             print('='*80)
 
         self.release = self.repo.create_git_release(self.new_tag, name=title, message=body, draft=self.draft, prerelease=self.prerelease)
+        self.upload()
+        self.notify()
 
     def upload(self):
         for i in self.file_list:
@@ -751,11 +773,8 @@ def source_build(build_type, opts):
 
 def release(opts):
     gh = Github(opts)
-    if gh == None:
-        return
-    gh.release()
-    gh.upload()
-    gh.notify()
+    if gh is not None:
+        gh.release()
 
 if __name__=="__main__":
     args = parse_args()

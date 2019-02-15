@@ -123,6 +123,7 @@ releases:
   draft: False
   prerelease: False
   checksum: True
+  overwrite: True
   base_version: 1.20.0
   file_glob: True
   files: EXAMPLE-*.tar.xz
