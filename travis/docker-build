@@ -51,6 +51,7 @@ install:
 
 MESON_BUILD_DIRNAME = '_build'
 DIGITS = re.compile(r'(\d+)')
+VERSION = '0.1.1'
 
 class Result:
     pass
@@ -189,6 +190,7 @@ class Github(object):
         self.overwrite = False
         self.file_list = []
         self.servers = []
+        self.custom_http_headers = []
 
         if 'releases' in self.opts['config'].keys():
             if 'base_version' in self.opts['config']['releases'].keys():
@@ -205,6 +207,9 @@ class Github(object):
 
             if 'checksum' in self.opts['config']['releases'].keys():
                 self.checksum = bool(self.opts['config']['releases']['checksum'])
+
+            if 'custom_http_headers' in self.opts['config']['releases'].keys():
+                self.custom_http_headers = self.opts['config']['releases']['custom_http_headers']
 
             if 'overwrite' in self.opts['config']['releases'].keys():
                 self.overwrite = bool(self.opts['config']['releases']['overwrite'])
@@ -393,6 +398,25 @@ class Github(object):
         self.release = self.repo.get_release(self.release.id)
         print('Please visit: {}\n'.format(self.release.html_url))
 
+    def gen_http_headers(self):
+        headers = {}
+        for line in self.custom_http_headers:
+            if line.find('=') < 0:
+                continue
+            (name, value) = line.split('=', 1)
+            name = name.strip(" \t\n\'\"")
+            value = value.strip(" \t\n\'\"")
+            if value.startswith('$'):
+                varname = value[1:]
+                value = os.getenv(varname, 'Undefined')
+            headers[name] = value
+        if 'user-agent' not in [ i.lower() for i in headers.keys()]:
+            if opts['travis']:
+                headers['User-Agent'] = 'docker-build/%s (Travis CI)' % VERSION
+            else:
+                headers['User-Agent'] = 'docker-build/%s' % VERSION
+        return headers
+
     def notify(self):
         print_info('2. Notify the server that a new version is released')
         data = {}
@@ -410,13 +434,14 @@ class Github(object):
             file['url'] = i.browser_download_url
             data['files'].append(file)
         post = json.dumps(data, indent=2)
+        headers = self.gen_http_headers()
         for url in self.servers:
             if self.verbose > 0:
                 print('Notification website: {}'.format(url))
             if self.verbose > 1:
                 print('The POST data is: \n{}'.format(post))
             try:
-                r = requests.post(url, json=data)
+                r = requests.post(url, json=data, headers=headers)
                 if r.status_code != 200:
                     print_error('Visit {} : {} {}'.format(url, r.status_code, r.reason))
                 else:
@@ -467,6 +492,7 @@ def parse_args():
     parser.add_argument('-b', '--build', dest='build', metavar='autotools|meson|scripts', action='append', help='Compile the software in docker container.')
     parser.add_argument('-r', '--release', dest='release', action='store_true', help='Release the tarballs.')
     parser.add_argument('-t', '--tag', dest='tag', action='store', help='Release based on which tag.(default to use "TRAVIS_TAG" envirment variable)')
+    parser.add_argument('--version', dest='version', action='store_true', help='Show the version')
     parser.add_argument('-C', '--clean', dest='clean', action='store_true', help='Clean up the docker container.')
 
     return parser.parse_args()
@@ -794,6 +820,13 @@ if __name__=="__main__":
     args = parse_args()
     config = load_config(args.config)
     opts = setup_options(args, config)
+
+    if args.version:
+        print(os.path.basename(sys.argv[0]), VERSION)
+        sys.exit(0)
+
+    if opts['verbose'] > 0:
+        print(os.path.basename(sys.argv[0]), VERSION)
 
     if args.shell:
         system_shell(opts)

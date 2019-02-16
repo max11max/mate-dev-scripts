@@ -24,10 +24,10 @@ install:
 script:
   - ./docker-build --name ${DISTRO} --verbose --config .travis.yml --build autotools
 
-# Remove the comments if you need auto release version when git push tag.
-# Don't forget to create github personal access token with the "public_repo/repo" and "user/user:email" scopes.
-# And setup the token value to the hidden environment variables named 'GITHUB_TOKEN'.
-# reference: https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
+## Remove the comments if you need auto release version when git push tag.
+## Don't forget to create github personal access token with the "public_repo/repo" and "user/user:email" scopes.
+## And setup the token value to the hidden environment variables named 'GITHUB_TOKEN'.
+## reference: https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
 #deploy:
 #  provider: script
 #  script: ./docker-build --name ${DISTRO} --verbose --config .travis.yml --release
@@ -77,7 +77,7 @@ requires:
 variables:
   - CFLAGS="-Wall -Werror=format-security"
 
-# Remove the comments if you need special parameters
+## Remove the comments if you need special parameters
 #configures:
 #  autotools:
 #    - --prefix=/usr
@@ -86,9 +86,9 @@ variables:
 #    - --prefix /usr
 #    - --sysconfdir /etc
 
-# Remove the comments if you need some thing do before build.
+## Remove the comments if you need some thing do before build.
 #before_scripts:
-# Remove the comments if `make distcheck` fail on debian.
+## Remove the comments if `make distcheck` fail on debian.
 #  - if [ ${DISTRO_NAME} == "debian" ];then
 #  -     curl -Ls -o debian.sh https://github.com/mate-desktop/mate-dev-scripts/raw/master/travis/debian.sh
 #  -     bash ./debian.sh
@@ -111,7 +111,7 @@ variables:
 #  - make
 #  - make install
 
-# Used for "--build scripts"
+## Used for "--build scripts"
 #build_scripts:
 #  - cmake
 #  - make
@@ -127,5 +127,8 @@ releases:
   base_version: 1.20.0
   file_glob: True
   files: EXAMPLE-*.tar.xz
+  custom_http_headers:
+    - "User-Agent = release-bot/0.1.1 (Travis CI)"
+    - Release-Token = $SERVER_POST_TOKEN
   servers:
     - http://pub.mate-desktop.org/releases/
