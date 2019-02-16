@@ -30,7 +30,7 @@ script:
 ## reference: https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
 #deploy:
 #  provider: script
-#  script: ./docker-build --name ${DISTRO} --verbose --config .travis.yml --release
+#  script: ./docker-build --verbose --config .travis.yml --release
 #  skip_cleanup: true
 #  on:
 #    tags: true

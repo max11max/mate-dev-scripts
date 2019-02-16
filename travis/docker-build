@@ -766,17 +766,27 @@ def autotools_build (opts):
 
     cmdlines = []
     if os.path.isfile('./autogen.sh') or os.path.isfile('./configure'):
-        if os.path.isfile('./autogen.sh'):
-            cmdlines.append('./autogen.sh ' + configures)
-        elif os.path.isfile('./configure'):
-            cmdlines.append('./configure ' + configures)
-        if not opts['travis']:
-            cmdlines.append('make clean')
-        cpu_count = multiprocessing.cpu_count()
-        if cpu_count > 1:
-            cmdlines.append('make -j%d'% cpu_count)
+        if opts['travis']:
+            if os.path.isfile('./autogen.sh'):
+                cmdlines.append('./autogen.sh ' + configures)
+            elif os.path.isfile('./configure'):
+                cmdlines.append('./configure ' + configures)
+            cpu_count = multiprocessing.cpu_count()
+            if cpu_count > 1:
+                cmdlines.append('make -j%d'% cpu_count)
+            else:
+                cmdlines.append('make')
         else:
-            cmdlines.append('make')
+            if os.path.isfile('./autogen.sh'):
+                cmdlines.append('./autogen.sh {} 2>&1 | tee {}-autogen.logs'.format(configures, opts['repo_name']))
+            elif os.path.isfile('./configure'):
+                cmdlines.append('./configure {} 2>&1 | tee {}-configure.logs'.format(configures, opts['repo_name']))
+            cmdlines.append('make clean > /dev/null')
+            cpu_count = multiprocessing.cpu_count()
+            if cpu_count > 1:
+                cmdlines.append('make -j {} 2>&1 | tee {}-make.logs'.format(cpu_count, opts['repo_name']))
+            else:
+                cmdlines.append('make 2>&1 | tee {}-make.logs'.format(opts['repo_name']))
         build_run ('source_build', cmdlines, opts)
 
 def meson_build (opts):
@@ -786,11 +796,15 @@ def meson_build (opts):
 
     cmdlines = []
     if os.path.isfile('./meson.build'):
-        if not opts['travis']:
-            cmdlines.append('[ -d %s ] && rm -rf %s' % (MESON_BUILD_DIRNAME, MESON_BUILD_DIRNAME))
-        cmdlines.append('meson %s %s' % (MESON_BUILD_DIRNAME, configures))
-        cmdlines.append('cd %s' % (MESON_BUILD_DIRNAME))
-        cmdlines.append('ninja')
+        if opts['travis']:
+            cmdlines.append('meson {} {}'.format(MESON_BUILD_DIRNAME, configures))
+            cmdlines.append('cd {}'.format(MESON_BUILD_DIRNAME))
+            cmdlines.append('ninja')
+        else:
+            cmdlines.append('[ -d {} ] && rm -rf {}'.format(MESON_BUILD_DIRNAME, MESON_BUILD_DIRNAME))
+            cmdlines.append('meson {} {} 2>&1 | tee {}-meson.logs'.format(MESON_BUILD_DIRNAME, configures, opts['repo_name']))
+            cmdlines.append('cd {}'.format(MESON_BUILD_DIRNAME))
+            cmdlines.append('ninja 2>&1 | tee {}-ninja.logs'.format(opts['repo_name']))
         build_run ('source_build', cmdlines, opts)
 
 def source_build(build_type, opts):
