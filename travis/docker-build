@@ -664,6 +664,8 @@ def build_run(script, cmdline, opts):
     fp = open(shpath, 'w+')
     fp.write('#!/bin/bash\n')
     fp.write('set -e\n')
+    if not opts['travis']:
+        fp.write('set -o pipefail\n')
     if opts['verbose']:
         fp.write('set -x\n\n')
 
