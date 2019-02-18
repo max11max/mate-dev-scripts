@@ -418,11 +418,13 @@ class Github(object):
         return headers
 
     def notify(self):
-        print_info('2. Notify the server that a new version is released')
+        if len(self.servers) > 0:
+            print_info('2. Notify the server that a new version is released')
         data = {}
         data['name'] = self.opts['repo_name']
         data['version'] = self.new_version
         data['tag'] = self.release.tag_name
+        data['repo'] = get_repo_name('/')
         data['draft'] = self.release.draft
         data['news'] = self.release.body
         data['prerelease'] = self.release.prerelease
@@ -519,28 +521,19 @@ def run_cmd(command, opts):
             print('# %s' % sh)
 
     result = Result()
+    io = ShortIO(opts['limit'])
     if opts['stage'] == 'source_build' or opts['stage'] == 'build_scripts':
         if opts['verbose'] > 0:
             io = ShortIO()
-        else:
-            io = ShortIO(opts['limit'])
     elif opts['stage'] == 'after_scripts':
         if opts['verbose'] > 1:
             io = ShortIO()
-        else:
-            io = ShortIO(opts['limit'])
     elif opts['stage'] == 'before_scripts':
         if opts['verbose'] > 2:
             io = ShortIO()
-        else:
-            io = ShortIO(opts['limit'])
     elif opts['stage'] == 'system_install':
         if opts['verbose'] > 3:
             io = ShortIO()
-        else:
-            io = ShortIO(opts['limit'])
-    else:
-        io = ShortIO(opts['limit'])
     p = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, bufsize=1)
     for line in iter(p.stdout.readline, b''):
         io.print(line.decode('utf-8'))
@@ -677,7 +670,7 @@ def build_run(script, cmdline, opts):
 
     # export option setup as envirment variables
     for k, v in opts.items():
-        if k in ['config', 'distro_upgrade', 'install_command', 'host_dir', 'image_name']:
+        if k in ['config', 'distro_upgrade', 'install_command', 'host_dir', 'image_name', 'stage']:
             continue
         fp.write ("export %s=%s\n" % (k.upper(), str(v).lower()))
 
@@ -768,27 +761,38 @@ def autotools_build (opts):
 
     cmdlines = []
     if os.path.isfile('./autogen.sh') or os.path.isfile('./configure'):
+        cpu_count = multiprocessing.cpu_count()
         if opts['travis']:
             if os.path.isfile('./autogen.sh'):
                 cmdlines.append('./autogen.sh ' + configures)
             elif os.path.isfile('./configure'):
                 cmdlines.append('./configure ' + configures)
-            cpu_count = multiprocessing.cpu_count()
             if cpu_count > 1:
-                cmdlines.append('make -j%d'% cpu_count)
+                cmdlines.append('make -j {}'.format(cpu_count))
             else:
                 cmdlines.append('make')
         else:
+            cmdlines.append('if which tee;then')
             if os.path.isfile('./autogen.sh'):
                 cmdlines.append('./autogen.sh {} 2>&1 | tee {}-autogen.logs'.format(configures, opts['repo_name']))
             elif os.path.isfile('./configure'):
                 cmdlines.append('./configure {} 2>&1 | tee {}-configure.logs'.format(configures, opts['repo_name']))
             cmdlines.append('make clean > /dev/null')
-            cpu_count = multiprocessing.cpu_count()
             if cpu_count > 1:
                 cmdlines.append('make -j {} 2>&1 | tee {}-make.logs'.format(cpu_count, opts['repo_name']))
             else:
                 cmdlines.append('make 2>&1 | tee {}-make.logs'.format(opts['repo_name']))
+            cmdlines.append('else')
+            if os.path.isfile('./autogen.sh'):
+                cmdlines.append('./autogen.sh {}'.format(configures))
+            elif os.path.isfile('./configure'):
+                cmdlines.append('./configure {}'.format(configures))
+            cmdlines.append('make clean > /dev/null')
+            if cpu_count > 1:
+                cmdlines.append('make -j {}'.format(cpu_count))
+            else:
+                cmdlines.append('make')
+            cmdlines.append('fi')
         build_run ('source_build', cmdlines, opts)
 
 def meson_build (opts):
