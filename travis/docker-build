@@ -182,13 +182,11 @@ class Github(object):
             return None
 
     def init_opts(self):
-        file_glob = False
         self.base_version = '1.0'
         self.draft = False
         self.prerelease = False
         self.checksum = False
         self.overwrite = False
-        self.file_list = []
         self.servers = []
         self.custom_http_headers = []
 
@@ -202,9 +200,6 @@ class Github(object):
             if 'prerelease' in self.opts['config']['releases'].keys():
                 self.prerelease = bool(self.opts['config']['releases']['prerelease'])
 
-            if 'file_glob' in self.opts['config']['releases'].keys():
-                file_glob = bool(self.opts['config']['releases']['file_glob'])
-
             if 'checksum' in self.opts['config']['releases'].keys():
                 self.checksum = bool(self.opts['config']['releases']['checksum'])
 
@@ -214,34 +209,12 @@ class Github(object):
             if 'overwrite' in self.opts['config']['releases'].keys():
                 self.overwrite = bool(self.opts['config']['releases']['overwrite'])
 
-            if 'files' in self.opts['config']['releases'].keys():
-                files = self.opts['config']['releases']['files']
-                if type(files) == str:
-                    if file_glob:
-                        self.file_list.extend(glob.glob(files))
-                    else:
-                        self.file_list.append(files)
-                elif type(files) == list:
-                    if file_glob:
-                        for i in files:
-                            self.file_list.extend(glob.glob(i))
-                    else:
-                        self.file_list.extend(files)
-
             if 'servers' in self.opts['config']['releases'].keys():
                 server = self.opts['config']['releases']['servers']
                 if type(server) == str:
                     self.servers.append(server)
                 elif type(server) == list:
                     self.servers.extend(server)
-        for i in self.file_list:
-            if not os.path.isfile(i):
-                self.file_list.remove(i)
-        if self.checksum:
-            checksum_list = []
-            for i in self.file_list:
-                checksum_list.append(gen_checksum(i))
-            self.file_list.extend(checksum_list)
         self.base_tag = Version(self.base_version).tag()
 
     def calc_version(self):
@@ -391,7 +364,33 @@ class Github(object):
         self.notify()
 
     def upload(self):
-        for i in self.file_list:
+        file_glob = False
+        file_list = []
+        if 'releases' in self.opts['config'].keys():
+            if 'file_glob' in self.opts['config']['releases'].keys():
+                file_glob = bool(self.opts['config']['releases']['file_glob'])
+            if 'files' in self.opts['config']['releases'].keys():
+                files = self.opts['config']['releases']['files']
+                if type(files) == str:
+                    if file_glob:
+                        file_list.extend(glob.glob(files))
+                    else:
+                        file_list.append(files)
+                elif type(files) == list:
+                    if file_glob:
+                        for i in files:
+                            file_list.extend(glob.glob(i))
+                    else:
+                        file_list.extend(files)
+        for i in file_list:
+            if not os.path.isfile(i):
+                file_list.remove(i)
+        if self.checksum:
+            checksum_list = []
+            for i in file_list:
+                checksum_list.append(gen_checksum(i))
+            file_list.extend(checksum_list)
+        for i in file_list:
             if self.verbose > 0:
                 print('Uploading {} ...'.format(os.path.basename(i)))
             self.release.upload_asset(i)
