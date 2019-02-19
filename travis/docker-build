@@ -697,6 +697,7 @@ def setup_options(args, config):
             'config' : config,
             'new_tag' : '',
             'travis' : bool(os.getenv("TRAVIS")),
+            'pull_request' : os.getenv('TRAVIS_PULL_REQUEST', 'false'),
             }
 
     if option['travis']:
