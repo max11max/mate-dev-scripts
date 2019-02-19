@@ -204,7 +204,10 @@ class Github(object):
                 self.checksum = bool(self.opts['config']['releases']['checksum'])
 
             if 'custom_http_headers' in self.opts['config']['releases'].keys():
-                self.custom_http_headers = self.opts['config']['releases']['custom_http_headers']
+                if type(self.opts['config']['releases']['custom_http_headers']) == str:
+                    self.custom_http_headers.append(self.opts['config']['releases']['custom_http_headers'])
+                elif type(self.opts['config']['releases']['custom_http_headers']) == list:
+                    self.custom_http_headers.extend(self.opts['config']['releases']['custom_http_headers'])
 
             if 'overwrite' in self.opts['config']['releases'].keys():
                 self.overwrite = bool(self.opts['config']['releases']['overwrite'])
@@ -664,9 +667,10 @@ def build_run(script, cmdline, opts):
 
     # Setup envirment variables
     if 'variables' in opts['config'].keys():
-        for var in opts['config']['variables']:
-            if var.find('=') > 0:
-                fp.write ("export %s\n" % var)
+        if type(opts['config']['variables']) == list:
+            for var in opts['config']['variables']:
+                if var.find('=') > 0:
+                    fp.write ("export %s\n" % var)
 
     # export option setup as envirment variables
     for k, v in opts.items():
@@ -753,12 +757,14 @@ def run_scripts(opts, stage = 'before'):
     script_name = stage + '_scripts'
     if script_name not in opts['config'].keys():
         return
-    build_run (script_name, opts['config'][script_name], opts)
+    if type(opts['config'][script_name]) == list:
+        build_run (script_name, opts['config'][script_name], opts)
 
 def autotools_build (opts):
     configures = '--prefix=/usr'
     if 'configures' in opts['config'].keys() and 'autotools' in opts['config']['configures'].keys():
-        configures = ' '.join(opts['config']['configures']['autotools'])
+        if type(opts['config']['configures']['autotools']) == list:
+            configures = ' '.join(opts['config']['configures']['autotools'])
 
     cmdlines = []
     if os.path.isfile('./autogen.sh') or os.path.isfile('./configure'):
@@ -799,7 +805,8 @@ def autotools_build (opts):
 def meson_build (opts):
     configures = '--prefix /usr'
     if 'configures' in opts['config'].keys() and 'meson' in opts['config']['configures'].keys():
-        configures = ' '.join(opts['config']['configures']['meson'])
+        if type(opts['config']['configures']['meson']) == list:
+            configures = ' '.join(opts['config']['configures']['meson'])
 
     cmdlines = []
     if os.path.isfile('./meson.build'):
