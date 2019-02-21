@@ -50,8 +50,11 @@ install:
     sys.exit(1)
 
 MESON_BUILD_DIRNAME = '_build'
+ROOT_DIR = '/rootdir'
+HOOK_NAME = 'distro_hook'
 DIGITS = re.compile(r'(\d+)')
 VERSION = '0.1.1'
+ISSUE_URL = 'https://github.com/mate-desktop/mate-dev-scripts/issues/new'
 
 class Result:
     pass
@@ -183,41 +186,34 @@ class Github(object):
 
     def init_opts(self):
         self.base_version = '1.0'
-        self.draft = False
-        self.prerelease = False
-        self.checksum = False
         self.overwrite = False
-        self.servers = []
+        self.tags = True
+        self.notify_servers = []
         self.custom_http_headers = []
 
-        if 'releases' in self.opts['config'].keys():
-            if 'base_version' in self.opts['config']['releases'].keys():
-                self.base_version = str(self.opts['config']['releases']['base_version'])
+        if 'releases' in self.opts['config'].keys() and 'github_releases' in self.opts['config']['releases'].keys():
+            if 'tags' in self.opts['config']['releases']['github_releases'].keys():
+                self.tags = str(self.opts['config']['releases']['github_releases']['tags'])
 
-            if 'draft' in self.opts['config']['releases'].keys():
-                self.draft = bool(self.opts['config']['releases']['draft'])
+            if 'base_version' in self.opts['config']['releases']['github_releases'].keys():
+                self.base_version = str(self.opts['config']['releases']['github_releases']['base_version'])
 
-            if 'prerelease' in self.opts['config']['releases'].keys():
-                self.prerelease = bool(self.opts['config']['releases']['prerelease'])
+            if 'custom_http_headers' in self.opts['config']['releases']['github_releases'].keys():
+                if type(self.opts['config']['releases']['github_releases']['custom_http_headers']) == str:
+                    self.custom_http_headers.append(self.opts['config']['releases']['github_releases']['custom_http_headers'])
+                elif type(self.opts['config']['releases']['github_releases']['custom_http_headers']) == list:
+                    self.custom_http_headers.extend(self.opts['config']['releases']['github_releases']['custom_http_headers'])
 
-            if 'checksum' in self.opts['config']['releases'].keys():
-                self.checksum = bool(self.opts['config']['releases']['checksum'])
+            if 'overwrite' in self.opts['config']['releases']['github_releases'].keys():
+                self.overwrite = bool(self.opts['config']['releases']['github_releases']['overwrite'])
 
-            if 'custom_http_headers' in self.opts['config']['releases'].keys():
-                if type(self.opts['config']['releases']['custom_http_headers']) == str:
-                    self.custom_http_headers.append(self.opts['config']['releases']['custom_http_headers'])
-                elif type(self.opts['config']['releases']['custom_http_headers']) == list:
-                    self.custom_http_headers.extend(self.opts['config']['releases']['custom_http_headers'])
-
-            if 'overwrite' in self.opts['config']['releases'].keys():
-                self.overwrite = bool(self.opts['config']['releases']['overwrite'])
-
-            if 'servers' in self.opts['config']['releases'].keys():
-                server = self.opts['config']['releases']['servers']
+            if 'notify_servers' in self.opts['config']['releases']['github_releases'].keys():
+                server = self.opts['config']['releases']['github_releases']['notify_servers']
                 if type(server) == str:
-                    self.servers.append(server)
+                    self.notify_servers.append(server)
                 elif type(server) == list:
-                    self.servers.extend(server)
+                    self.notify_servers.extend(server)
+
         self.base_tag = Version(self.base_version).tag()
 
     def calc_version(self):
@@ -315,10 +311,16 @@ class Github(object):
         author = github.InputGitAuthor(account.name, account.email)
         master = self.repo.get_branch("master")
         tag = self.repo.create_git_tag(self.new_tag, 'version %s' % self.new_version, master.commit.commit.sha, 'commit', tagger=author)
-        self.repo.create_git_ref('refs/tags/{}'.format(tag.tag), tag.sha)
+        self.repo.create_git_ref('refs/tags/%s' % tag.tag, tag.sha)
 
     def check_release(self):
         ok = True
+
+        is_tag_stage = bool(self.opts['new_tag'])
+        if self.tags and not is_tag_stage:
+            print_info('No tags are created, ignore github release.')
+            return False
+
         releases = self.repo.get_releases()
         for release in releases:
             if release.tag_name == self.new_tag:
@@ -335,13 +337,13 @@ class Github(object):
             return
 
         info = '1. Create github'
-        if self.prerelease:
+        if self.opts['prerelease']:
             info += ' prerelease'
         else:
             info += ' release'
-        if self.draft:
+        if self.opts['draft']:
             info += '[DRAFT]'
-        info += ' for {}-{}'.format(self.opts['repo_name'], self.new_version)
+        info += ' for %s-%s' % (self.opts['repo_name'], self.new_version)
         print_info(info)
 
         #if new tag not exist, create it first.
@@ -362,43 +364,17 @@ class Github(object):
             print(body)
             print('='*80)
 
-        self.release = self.repo.create_git_release(self.new_tag, name=title, message=body, draft=self.draft, prerelease=self.prerelease)
+        self.release = self.repo.create_git_release(self.new_tag, name=title, message=body, draft=self.opts['draft'], prerelease=self.opts['prerelease'])
         self.upload()
         self.notify()
 
     def upload(self):
-        file_glob = False
-        file_list = []
-        if 'releases' in self.opts['config'].keys():
-            if 'file_glob' in self.opts['config']['releases'].keys():
-                file_glob = bool(self.opts['config']['releases']['file_glob'])
-            if 'files' in self.opts['config']['releases'].keys():
-                files = self.opts['config']['releases']['files']
-                if type(files) == str:
-                    if file_glob:
-                        file_list.extend(glob.glob(files))
-                    else:
-                        file_list.append(files)
-                elif type(files) == list:
-                    if file_glob:
-                        for i in files:
-                            file_list.extend(glob.glob(i))
-                    else:
-                        file_list.extend(files)
-        for i in file_list:
-            if not os.path.isfile(i):
-                file_list.remove(i)
-        if self.checksum:
-            checksum_list = []
-            for i in file_list:
-                checksum_list.append(gen_checksum(i))
-            file_list.extend(checksum_list)
-        for i in file_list:
+        for i in self.opts['file_lists']:
             if self.verbose > 0:
-                print('Uploading {} ...'.format(os.path.basename(i)))
+                print('Uploading %s ...' % os.path.basename(i))
             self.release.upload_asset(i)
         self.release = self.repo.get_release(self.release.id)
-        print('Please visit: {}\n'.format(self.release.html_url))
+        print('Please visit: %s\n' % (self.release.html_url))
 
     def gen_http_headers(self):
         headers = {}
@@ -420,7 +396,7 @@ class Github(object):
         return headers
 
     def notify(self):
-        if len(self.servers) > 0:
+        if len(self.notify_servers) > 0:
             print_info('2. Notify the server that a new version is released')
         data = {}
         data['name'] = self.opts['repo_name']
@@ -439,18 +415,18 @@ class Github(object):
             data['files'].append(file)
         post = json.dumps(data, indent=2)
         headers = self.gen_http_headers()
-        for url in self.servers:
+        for url in self.notify_servers:
             if self.verbose > 0:
-                print('Notification website: {}'.format(url))
+                print('Notification website: %s' % url)
             if self.verbose > 1:
-                print('The POST data is: \n{}'.format(post))
+                print('The POST data is: \n %s' % post)
             try:
                 r = requests.post(url, json=data, headers=headers)
                 if r.status_code != 200:
                     print_error('Visit {} : {} {}'.format(url, r.status_code, r.reason))
                     sys.exit(1)
                 else:
-                    print('{} has been notified'.format(url))
+                    print('%s has been notified' % url)
             except requests.exceptions.ConnectionError as error:
                 print_error('Connect Error {} : {}'.format(url, error))
 
@@ -495,7 +471,7 @@ def parse_args():
     parser.add_argument('-v', '--verbose', dest='verbose', action='count', default=0, help='Verbose output, the number of output lines is not limited')
     parser.add_argument('-i', '--install', dest='install', action='store_true', help='Install dependent packages in docker container.')
     parser.add_argument('-b', '--build', dest='build', metavar='autotools|meson|scripts', action='append', help='Compile the software in docker container.')
-    parser.add_argument('-r', '--release', dest='release', action='store_true', help='Release the tarballs.')
+    parser.add_argument('-r', '--release', dest='release', metavar='github|scripts', action='append', help='Release the tarballs.')
     parser.add_argument('-t', '--tag', dest='tag', action='store', help='Release based on which tag.(default to use "TRAVIS_TAG" envirment variable)')
     parser.add_argument('--version', dest='version', action='store_true', help='Show the version')
     parser.add_argument('-C', '--clean', dest='clean', action='store_true', help='Clean up the docker container.')
@@ -515,7 +491,7 @@ def load_config (cfgfile):
 
 def run_cmd(command, opts):
     print_cmdline(command)
-    if command.startswith('docker exec'):
+    if command.startswith('docker exec') or command.startswith(opts['host_dir']):
         sh = command.split()[-1].strip()
         shpath = os.path.join(opts['host_dir'], os.path.basename(sh))
         if os.path.isfile(shpath):
@@ -565,7 +541,7 @@ def docker_run_daemon (command, opts):
     image_name = opts['image_name']
     opts['stage'] = 'docker_run_daemon'
 
-    cmd = "docker run --name %s --volume %s:/rootdir -t -d %s %s" % (container_name, host_dir, image_name, command)
+    cmd = "docker run --name %s --volume %s:%s -t -d %s %s" % (container_name, host_dir, ROOT_DIR, image_name, command)
     result = run_cmd (cmd, opts)
     if result.exit_code != 0:
         sys.exit(1)
@@ -608,15 +584,14 @@ def system_shell(opts):
 
 def system_update (opts):
     if not opts['travis']:
-        hook_name = 'distro_hook'
-        host_hook_path = os.path.join(opts['host_dir'], hook_name)
-        user_hook_path = os.path.expanduser('~/.%s' % hook_name)
+        host_hook_path = os.path.join(opts['host_dir'], HOOK_NAME)
+        user_hook_path = os.path.expanduser('~/.%s' % HOOK_NAME)
         if not os.path.isfile(host_hook_path) and os.path.isfile(user_hook_path):
             shutil.copy(user_hook_path, host_hook_path)
         if os.path.isfile(host_hook_path):
             os.chmod(host_hook_path, stat.S_IRWXU |stat.S_IXGRP|stat.S_IXOTH)
-            cmd = '/rootdir/%s %s' % (hook_name, opts['distro_name'])
-            opts['stage'] = hook_name
+            cmd = '%s %s' % (os.path.join(ROOT_DIR, HOOK_NAME), opts['distro_name'])
+            opts['stage'] = HOOK_NAME
             docker_exec (cmd, opts)
     opts['stage'] = 'system_update'
     docker_exec (opts['distro_upgrade'], opts)
@@ -654,7 +629,7 @@ def get_repo_name(join_char=None):
     else:
         return join_char.join([owner, repo])
 
-def build_run(script, cmdline, opts):
+def create_script(script, cmdline, opts):
     opts['stage'] = script
     shpath = os.path.join(opts['host_dir'], script)
     fp = open(shpath, 'w+')
@@ -676,15 +651,15 @@ def build_run(script, cmdline, opts):
     for k, v in opts.items():
         if k in ['config', 'distro_upgrade', 'install_command', 'host_dir', 'image_name', 'stage', 'new_tag']:
             continue
-        fp.write ("export %s=%s\n" % (k.upper(), str(v).lower()))
-
+        if type(v) == list:
+            fp.write ("export %s=\"%s\"\n" % (k.upper(), ' '.join(v)))
+        else:
+            fp.write ("export %s=%s\n" % (k.upper(), str(v).lower()))
     fp.write('\n')
-    fp.write('cd /rootdir\n\n')
     for line in cmdline:
         fp.write('%s\n' % line)
     fp.close()
     os.chmod(shpath, stat.S_IRWXU |stat.S_IXGRP|stat.S_IXOTH)
-    docker_exec(os.path.join('/rootdir/', script), opts)
 
 def setup_options(args, config):
     option = {
@@ -695,8 +670,8 @@ def setup_options(args, config):
             'image_name' : args.name,
             'limit' : args.limit,
             'host_dir' : os.getcwd(),
-            'start_dir' : '/rootdir',
-            'build_dir' : '/rootdir',
+            'start_dir' : ROOT_DIR,
+            'build_dir' : ROOT_DIR,
             'verbose' : args.verbose,
             'config' : config,
             'new_tag' : '',
@@ -742,8 +717,7 @@ def setup_options(args, config):
         option['distro_upgrade'] = 'apt-get update -y'
         option['install_command'] = 'env DEBIAN_FRONTEND=noninteractive apt-get install -y'
     else:
-        url = 'https://github.com/mate-desktop/mate-dev-scripts/issues/new'
-        msg = 'The "%s" distro is not supported, please visit "%s" to create a new issue.' % (distro_name, url)
+        msg = 'The "%s" distro is not supported, please visit "%s" to create a new issue.' % (distro_name, ISSUE_URL)
         print_error(msg)
         sys.exit(1)
 
@@ -758,7 +732,10 @@ def run_scripts(opts, stage = 'before'):
     if script_name not in opts['config'].keys():
         return
     if type(opts['config'][script_name]) == list:
-        build_run (script_name, opts['config'][script_name], opts)
+        cmdlines = opts['config'][script_name]
+        cmdlines.insert(0, 'cd %s' % ROOT_DIR)
+        create_script(script_name, cmdlines, opts)
+        docker_exec(os.path.join(ROOT_DIR, script_name), opts)
 
 def autotools_build (opts):
     configures = '--prefix=/usr'
@@ -766,7 +743,7 @@ def autotools_build (opts):
         if type(opts['config']['configures']['autotools']) == list:
             configures = ' '.join(opts['config']['configures']['autotools'])
 
-    cmdlines = []
+    cmdlines = ['cd %s' % ROOT_DIR]
     if os.path.isfile('./autogen.sh') or os.path.isfile('./configure'):
         cpu_count = multiprocessing.cpu_count()
         if opts['travis']:
@@ -800,7 +777,8 @@ def autotools_build (opts):
             else:
                 cmdlines.append('make')
             cmdlines.append('fi')
-        build_run ('source_build', cmdlines, opts)
+        create_script ('source_build', cmdlines, opts)
+        docker_exec(os.path.join(ROOT_DIR, 'source_build'), opts)
 
 def meson_build (opts):
     configures = '--prefix /usr'
@@ -808,7 +786,7 @@ def meson_build (opts):
         if type(opts['config']['configures']['meson']) == list:
             configures = ' '.join(opts['config']['configures']['meson'])
 
-    cmdlines = []
+    cmdlines = ['cd %s' % ROOT_DIR]
     if os.path.isfile('./meson.build'):
         if opts['travis']:
             cmdlines.append('meson {} {}'.format(MESON_BUILD_DIRNAME, configures))
@@ -819,7 +797,8 @@ def meson_build (opts):
             cmdlines.append('meson {} {} 2>&1 | tee {}-meson.logs'.format(MESON_BUILD_DIRNAME, configures, opts['repo_name']))
             cmdlines.append('cd {}'.format(MESON_BUILD_DIRNAME))
             cmdlines.append('ninja 2>&1 | tee {}-ninja.logs'.format(opts['repo_name']))
-        build_run ('source_build', cmdlines, opts)
+        create_script ('source_build', cmdlines, opts)
+        docker_exec(os.path.join(ROOT_DIR, 'source_build'), opts)
 
 def source_build(build_type, opts):
     opts['build_type'] = build_type
@@ -839,10 +818,77 @@ def source_build(build_type, opts):
         print_info ('Build system "%s" is not supported.' % build_type)
     run_scripts(opts, 'after')
 
-def release(opts):
-    gh = Github(opts)
-    if gh is not None:
-        gh.release()
+def gen_release_file_lists(opts):
+    checksum = False
+    file_glob = False
+    file_list = []
+    if 'releases' in opts['config'].keys():
+        if 'checksum' in opts['config']['releases'].keys():
+            checksum = bool(opts['config']['releases']['checksum'])
+        if 'file_glob' in opts['config']['releases'].keys():
+            file_glob = bool(opts['config']['releases']['file_glob'])
+        if 'files' in opts['config']['releases'].keys():
+            files = opts['config']['releases']['files']
+            if type(files) == str:
+                if file_glob:
+                    file_list.extend(glob.glob(files))
+                else:
+                    file_list.append(files)
+            elif type(files) == list:
+                if file_glob:
+                    for i in files:
+                        file_list.extend(glob.glob(i))
+                else:
+                    file_list.extend(files)
+    for i in file_list:
+        if not os.path.isfile(i):
+            print_error('The file "%s" does not exists! Ignore it.'.format(i))
+            file_list.remove(i)
+    if checksum:
+        checksum_list = []
+        for i in file_list:
+            checksum_list.append(gen_checksum(i))
+        file_list.extend(checksum_list)
+    return file_list
+
+def init_release_config(opts):
+    opts['draft'] = False
+    opts['prerelease'] = False
+    opts['file_lists'] = gen_release_file_lists(opts)
+    if 'releases' in opts['config'].keys():
+        if 'draft' in opts['config']['releases'].keys():
+            opts['draft'] = bool(opts['config']['releases']['draft'])
+
+        if 'prerelease' in opts['config']['releases'].keys():
+            opts['prerelease'] = bool(opts['config']['releases']['prerelease'])
+
+def scripts_release(opts):
+    script_name = 'scripts_release'
+    cmd = os.path.join(opts['host_dir'], script_name)
+    if 'releases' in opts['config'].keys() and 'scripts_releases' in opts['config']['releases'].keys():
+        if type(opts['config']['releases']['scripts_releases']) == list:
+            cmdlines = opts['config']['releases']['scripts_releases']
+            cmdlines.insert(0, 'cd %s' % opts['host_dir'])
+            create_script(script_name, cmdlines, opts)
+            result = run_cmd (cmd, opts)
+            if result.exit_code != 0:
+                sys.exit(1)
+
+def release(release_type, opts):
+    if release_type == 'github':
+        opts['stage'] = 'github_release'
+        gh = Github(opts)
+        if gh is None:
+            print_error('Github release failed.')
+            sys.exit(1)
+        else:
+            gh.release()
+    elif release_type == 'scripts':
+        scripts_release(opts)
+    else:
+        msg = 'The "%s" release is not supported, please visit "%s" to create a new issue.' % (release_type, ISSUE_URL)
+        print_error(msg)
+        sys.exit(1)
 
 if __name__=="__main__":
     args = parse_args()
@@ -872,7 +918,9 @@ if __name__=="__main__":
             source_build(i, opts)
 
     if args.release:
-        release(opts)
+        init_release_config(opts)
+        for i in args.release:
+            release(i, opts)
 
     if args.clean:
         if docker_is_running (opts):

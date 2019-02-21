@@ -30,7 +30,7 @@ script:
 ## reference: https://docs.travis-ci.com/user/environment-variables/#defining-variables-in-repository-settings
 #deploy:
 #  provider: script
-#  script: ./docker-build --verbose --config .travis.yml --release
+#  script: ./docker-build --verbose --config .travis.yml --release github
 #  skip_cleanup: true
 #  on:
 #    tags: true
@@ -85,7 +85,7 @@ variables:
 #    - --prefix /usr
 #    - --sysconfdir /etc
 
-## Remove the comments if you need some thing do before build.
+## Remove the comments if you need to do something before building.
 #before_scripts:
 ## Remove the comments if `make distcheck` fail on debian.
 #  - if [ ${DISTRO_NAME} == "debian" ];then
@@ -119,15 +119,25 @@ after_scripts:
   - make distcheck
 
 releases:
-  draft: False
-  prerelease: False
-  checksum: True
-  overwrite: True
-  base_version: 1.20.0
-  file_glob: True
-  files: EXAMPLE-*.tar.xz
-  custom_http_headers:
-    - "User-Agent = release-bot/0.1.1 (Travis CI)"
-    - Release-Token = $SERVER_POST_TOKEN
-  servers:
-    - http://pub.mate-desktop.org/releases/
+  draft: False             # if True, to create a draft for release 
+  prerelease: False        # if True, create a prelease version
+  checksum: True           # if True, auto generate sha256sum file for the tarball, False do nothing
+  file_glob: True          # if True, files use glob to get full path, if False , files is the full path.
+  files: EXAMPLE-*.tar.xz  # files to upload for release, support fullpath or pathname pattern expansion.
+  #files:                  # files also can use list
+  #  - filepath-1
+  #  - filepath-2
+  github_release:          # 1. Release to github
+    tags: True                    # if True, only create github release when push tag.
+    overwrite: True               # if exists a same named tag on server, first delete that tag, then create new tag.
+    base_version: 1.20.0          # base version, if no tags exists on server, use this as previous version to generate release notes.
+    custom_http_headers:          # docker-build can use custom http header to server  when send post message.
+      - "User-Agent = release-bot/0.1.1 (Travis CI)"       # name=value to send server by http header
+      - Release-Token = $SERVER_POST_TOKEN                 # the value begin with $ to use environment variables.
+    notify_servers:               # after github release, notify servers.
+      - http://pub.mate-desktop.org/releases/              # which url will receive the http POST data.
+  scripts_release:         # 2. Release to use custom scripts
+    - for i in $FILE_LISTS; do
+    - echo $i
+    - done
+    - scp $FILE_LISTS use@server.com:path/of/directory
