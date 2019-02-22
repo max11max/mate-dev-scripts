@@ -31,8 +31,11 @@ import shutil
 import re
 import glob
 import requests
+import hmac
 import hashlib
+import uuid
 import multiprocessing
+
 try:
     import github
 except:
@@ -406,6 +409,8 @@ class Github(object):
         data['draft'] = self.release.draft
         data['news'] = self.release.body
         data['prerelease'] = self.release.prerelease
+        data['created_at'] = self.release.created_at
+        data['published_at'] = self.release.published_at
         data['files'] = []
         for i in self.release.get_assets():
             file = {}
@@ -413,22 +418,46 @@ class Github(object):
             file['size'] = i.size
             file['url'] = i.browser_download_url
             data['files'].append(file)
-        post = json.dumps(data, indent=2)
+        payload = json.dumps(data, indent=2, default=str)
         headers = self.gen_http_headers()
+        result = 0
         for url in self.notify_servers:
             if self.verbose > 0:
                 print('Notification website: %s' % url)
             if self.verbose > 1:
-                print('The POST data is: \n %s' % post)
-            try:
-                r = requests.post(url, json=data, headers=headers)
-                if r.status_code != 200:
-                    print_error('Visit {} : {} {}'.format(url, r.status_code, r.reason))
-                    sys.exit(1)
-                else:
-                    print('%s has been notified' % url)
-            except requests.exceptions.ConnectionError as error:
-                print_error('Connect Error {} : {}'.format(url, error))
+                print('The POST data is: \n%s' % payload)
+            result += send_post_to_url(url, payload, headers)
+        if result > 0:
+            print_error('We can not send post to all urls')
+            sys.exit(1)
+
+def send_post_to_url(url, payload, headers={}):
+    nonce = str(uuid.uuid4())
+    if type(payload) == str:
+        data = nonce + payload
+    else:
+        data = nonce + json.dumps(payload, indent=2, default=str)
+
+    secret = os.getenv('API_SECRET', '')
+    if not secret:
+        print_info('Please set the "API_SECRET" environment variable for secure transfer.')
+    else:
+        signature = hmac.new(bytes(secret, 'utf8'), msg = bytes(data, 'utf8'), digestmod = hashlib.sha256)
+        sign = signature.hexdigest().upper()
+        headers['X-Build-Signature'] = sign
+
+    headers['X-Build-Nonce'] = nonce
+    try:
+        r = requests.post(url, data=data, headers=headers)
+        if r.status_code != 200:
+            print_error('Visit {} : {} {}'.format(url, r.status_code, r.reason))
+            return 1
+        else:
+            print('%s has been notified' % url)
+            return 0
+    except requests.exceptions.ConnectionError as error:
+        print_error('Connect Error {} : {}'.format(url, error))
+        return 1
 
 class bcolors:
     CEND    = '\33[0m'
@@ -657,7 +686,8 @@ def create_script(script, cmdline, opts):
             fp.write ("export %s=%s\n" % (k.upper(), str(v).lower()))
     fp.write('\n')
     for line in cmdline:
-        fp.write('%s\n' % line)
+        if line is not None:
+            fp.write('%s\n' % line)
     fp.close()
     os.chmod(shpath, stat.S_IRWXU |stat.S_IXGRP|stat.S_IXOTH)
 

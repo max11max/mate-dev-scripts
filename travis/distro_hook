@@ -8,6 +8,7 @@ fi
 case $distro in
         archlinux)
                 echo 'Server = http://mirrors.163.com/archlinux/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+                rm -f /usr/share/libalpm/hooks/package-cleanup.hook
                 ;;
         debian)
                 sed -i -s 's/deb.debian.org/ftp2.cn.debian.org/g' /etc/apt/sources.list
