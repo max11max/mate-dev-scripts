@@ -669,6 +669,11 @@ def create_script(script, cmdline, opts):
     if opts['verbose']:
         fp.write('set -x\n\n')
 
+    # Import TRAVIS_* envirment variables
+    for var in os.environ:
+        if var.startswith('TRAVIS_'):
+            fp.write ("export %s=%s\n" % (var, os.environ[var]))
+
     # Setup envirment variables
     if 'variables' in opts['config'].keys():
         if type(opts['config']['variables']) == list:
